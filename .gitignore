@@ -1,0 +1,44 @@
+# ROS2 build artifacts
+build/
+install/
+log/
+.colcon/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+*.egg
+
+# C++
+*.o
+*.a
+*.so
+*.out
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ROS
+*.bag
+*.db3
+*.mcap
+
+# Temporary files
+*.tmp
+*.bak
+*.log
