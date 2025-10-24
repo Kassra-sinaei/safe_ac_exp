@@ -3,18 +3,31 @@
 <package format="3">
   <name>safe_ac_exp</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>ROS2 Package for hardware experiments of RA-L paper</description>
   <maintainer email="kasra.sinaei@gmail.com">kasra</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Open Source under MIT License</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <build_depend>rcl</build_depend>
+  <build_export_depend>roscpp</build_export_depend>
+  
+  <build_export_depend>std_msgs</build_export_depend>
 
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
+  <depend>ros2_unitree_legged_msgs</depend>
+  <depend>vicon_receiver</depend>
 
-  <test_depend>ament_lint_auto</test_depend>
-  <test_depend>ament_lint_common</test_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-cvxpy</exec_depend>
+
 
   <export>
     <build_type>ament_cmake</build_type>

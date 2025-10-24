@@ -49,18 +49,22 @@ class MobileRobotController(Controller, Node):
         Controller.__init__(**controller_params)
         Node.__init__(self, "mobile_robot_controller")
 
-
         # ROS Setup
         self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 10)
-        self.vicon_robot_sub = self.create_subscription(
-            Position, '/vicon/go_1/go_1', self.mocap_callback, 10
-        )
-        self.vicon_obs1_sub = self.create_subscription(
-            Position, '/vicon/obstacle1/obstacle1', self.mocap_callback, 10
-        )
-        self.vicon_obs2_sub = self.create_subscription(
-            Position, '/vicon/obstacle2/obstacle2', self.mocap_callback, 10
-        )
+        self.mocap_topics = {
+            '/vicon/go_1/go_1': 'robot',
+            '/vicon/obstacle1/obstacle1': 'obs1',
+            '/vicon/obstacle2/obstacle2': 'obs2'
+        }
+        self.vicon_subs = []
+        for topic in self.mocap_topics.keys():
+            sub = self.create_subscription(
+                Position,
+                topic,
+                self.mocap_callback,
+                10
+            )
+            self.vicon_subs.append(sub)
         self.timer_ = self.create_timer(settings['dt'], self.control_loop)
         self.msg_ = Twist()
         
@@ -143,30 +147,30 @@ class MobileRobotController(Controller, Node):
         # Extract 2D position
         position = np.array([[msg.x_trans], [msg.y_trans]])
         
-        if 'go_1' in subject or 'robot' in subject:
+        if 'go_1' in subject:
             # Update robot position
             self.robot_position = position
             self.x = position  # Update controller state
             self.position_received = True
             self.get_logger().debug(f"Robot position: {position.flatten()}")
             
-        elif 'obstacle1' in subject or 'obs1' in subject:
+        elif 'obstacle1' in subject:
             # Update obstacle 1 position
             self.obs1_position = position
             self.settings['obs1']['center'] = position
             self.get_logger().debug(f"Obstacle 1 position: {position.flatten()}")
             
-        elif 'obstacle2' in subject or 'obs2' in subject:
+        elif 'obstacle2' in subject:
             # Update obstacle 2 position
             self.obs2_position = position
             self.settings['obs2']['center'] = position
             self.get_logger().debug(f"Obstacle 2 position: {position.flatten()}")
             
         else:
-            self.get_logger().warn(f"Unknown subject: {msg.subject_name}")
+            self.get_logger().error(f"Unknown subject: {msg.subject_name}")
 
 
-def run_simulation():
+def run_experiment():
     # --- Settings and Parameters --- 
     num_rbf_centers_1d = 5
     n_rbf_1d = num_rbf_centers_1d**2 + 1   
@@ -189,19 +193,17 @@ def run_simulation():
         'alpha': 0.25, 'E': settings['E'], 'n_x': settings['n_x'], 
         'n_p': settings['n_p'], 'dt': settings['dt']
     }
-    
-    start_time = time.time()
-    ctrl = MobileRobotController(settings=settings, **controller_params)
-    x = np.array([[0.0], [0.0]]) # Initial position
-    
-    for k, t in enumerate(settings['time']):
-        ctrl.x = x
-        u_val = ctrl.u(settings['x_d'][0, :, k], settings['v_d'][0, :, k], t)
-        x = r4k(x, u_val, settings['dt'], dynamics)
 
-    end_time = time.time()
-    print(f"Execution time: {(end_time - start_time):.4f} seconds")
-    plot_results(settings, ctrl, goal_pos)
+    ctrl = MobileRobotController(settings=settings, **controller_params)
+    
+    try:
+        rclpy.spin(kalman_filter_node)
+    except KeyboardInterrupt:
+        kalman_filter_node.get_logger().info('KeyboardInterrupt received, shutting down.')
+    finally:
+        plot_results(settings, ctrl, goal_pos)
+        ctrl.destroy_node()
+
 
 def plot_results(settings, ctrl, goal_pos):
     """
@@ -364,4 +366,4 @@ def plot_results(settings, ctrl, goal_pos):
     plt.show()
 
 if __name__ == '__main__':
-    run_simulation()
+    run_experiment()

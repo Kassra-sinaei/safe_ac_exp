@@ -27,7 +27,7 @@ def generate_launch_description():
             output='screen'
         ),
         Node(
-            package='robot_control_ac',
+            package='safe_ac_exp',
             executable='robot_control_ac.py',
             name='controller_node',
             output='screen'

@@ -59,4 +59,12 @@ private:
     rclcpp::Publisher<ros2_unitree_legged_msgs::msg::HighCmd>::SharedPtr high_command_publisher_;
 };
 
+int main(int argc, char **argv)
+{
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<RobotController>());
+    rclcpp::shutdown();
+    return 0;
+}
+
 #endif // ROBOT_CONTROL_KF_ROBOT_CONTROLLER_HPP
