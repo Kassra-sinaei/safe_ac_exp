@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
@@ -5,7 +7,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from types import SimpleNamespace
 import scipy.sparse as sparse
-from controller import Controller
+from scipy.spatial.transform import Rotation
+from safe_ac_exp.controller import Controller
 import osqp
 import time
 
@@ -46,15 +49,50 @@ class MobileRobotController(Controller, Node):
     It contains the main control loop and the QP solver.
     """
     def __init__(self, settings, **controller_params):
-        Controller.__init__(**controller_params)
+        Controller.__init__(self, **controller_params)
         Node.__init__(self, "mobile_robot_controller")
+        
+        # Controller settings
+        self.settings = settings
+        self.kappa = settings['kappa']
+
+        # Obstacle definitions
+        self.obstacles = [
+            {'center': np.array([[2.0], [1.5]]), 'radius': 0.45},
+            {'center': np.array([[3.0], [2.5]]), 'radius': 0.45}
+        ]
+
+        # SI to Unicycle conversion parameters
+        self.yaw = None
+        self.Kv = 1.0
+        self.Kw = 1.5
+
+        # Vicon Coordinate frame correction
+        self.theta = -np.pi/2
+        self.mocap_R = np.array([[np.cos(self.theta), -np.sin(self.theta)], [np.sin(self.theta), np.cos(self.theta)]])
+        self.mocap_P = None
+
+        # Trajectory index
+        self.index = 0
+        self.experiment_complete = False
+
+        # RBF basis function setup
+        num_centers_per_dim = 5
+        x_centers = np.linspace(settings['workspace'][0], settings['workspace'][1], num_centers_per_dim)
+        y_centers = np.linspace(settings['workspace'][2], settings['workspace'][3], num_centers_per_dim)
+        xv, yv = np.meshgrid(x_centers, y_centers)
+        self.rbf_centers = np.vstack([xv.ravel(), yv.ravel()])
+        self.rbf_width = (settings['workspace'][1] - settings['workspace'][0]) / (num_centers_per_dim - 1)
+
+        print(f"RBF Centers shape: {self.rbf_centers.shape}")
+        print(f"RBF Width: {self.rbf_width}")
 
         # ROS Setup
         self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         self.mocap_topics = {
             '/vicon/go_1/go_1': 'robot',
-            '/vicon/obstacle1/obstacle1': 'obs1',
-            '/vicon/obstacle2/obstacle2': 'obs2'
+            '/vicon/box_1/box_1': 'obs1',
+            '/vicon/box_2/box_2': 'obs2'
         }
         self.vicon_subs = []
         for topic in self.mocap_topics.keys():
@@ -67,26 +105,7 @@ class MobileRobotController(Controller, Node):
             self.vicon_subs.append(sub)
         self.timer_ = self.create_timer(settings['dt'], self.control_loop)
         self.msg_ = Twist()
-        
-        # Controller settings
-        self.settings = settings
-        self.kappa = settings['kappa']
 
-        # Obstacle definitions
-        self.obstacles = [
-            {'center': np.array([[2.0], [1.5]]), 'radius': 0.5},
-            {'center': np.array([[3.0], [2.5]]), 'radius': 0.5}
-        ]
-        # RBF basis function setup
-        num_centers_per_dim = 5
-        x_centers = np.linspace(settings['workspace'][0], settings['workspace'][1], num_centers_per_dim)
-        y_centers = np.linspace(settings['workspace'][2], settings['workspace'][3], num_centers_per_dim)
-        xv, yv = np.meshgrid(x_centers, y_centers)
-        self.rbf_centers = np.vstack([xv.ravel(), yv.ravel()])
-        self.rbf_width = (settings['workspace'][1] - settings['workspace'][0]) / (num_centers_per_dim - 1)
-
-        print(f"RBF Centers shape: {self.rbf_centers.shape}")
-        print(f"RBF Width: {self.rbf_width}")
 
     def z(self, x):
         """
@@ -127,16 +146,76 @@ class MobileRobotController(Controller, Node):
         return self.K_e * np.linalg.norm(error)**2
 
     def control_loop(self):
-        u_val = self.u(self.settings['x_d'][0, :, k], self.settings['v_d'][0, :, k], t)
-        # Publish velocity command
-        cmd.linear.x = float(u_val[0])
-        cmd.linear.y = float(u_val[1])
-        cmd.linear.z = 0.0
-        cmd.angular.x = 0.0
-        cmd.angular.y = 0.0
-        cmd.angular.z = 0.0
-        self.cmd_vel_pub.publish(cmd)
+        if self.yaw == None:
+            return
+        if self.index > len(self.settings['time']) - 1:
+            self.get_logger().info('Reached the end of the trajectory. Stopping the robot.')
+            self.msg_.linear.x = 0.0
+            self.msg_.angular.z = 0.0
+            self.msg_.linear.y = 0.0
+            self.cmd_vel_pub.publish(self.msg_)
+            self.experiment_complete = True
+            return
+        else:
+            u_val = self.u(self.settings['x_d'][0, :, self.index], self.settings['v_d'][0, :, self.index], self.index * self.settings['dt'])
+            u_unicycle = self.si2unicycle(u_val)
+            # Publish velocity command
+            self.msg_.linear.x = float(u_unicycle[0].item())
+            self.msg_.linear.y = 0.0
+            self.msg_.linear.z = 0.0
+            self.msg_.angular.x = 0.0
+            self.msg_.angular.y = 0.0
+            self.msg_.angular.z = float(u_unicycle[1].item())
+            # self.msg_.linear.x = float(u_val[0] * 0.3)
+            # self.msg_.linear.y = float(u_val[1] * 0.3)
+            # self.msg_.linear.z = 0.0
+            # self.msg_.angular.x = 0.0
+            # self.msg_.angular.y = 0.0
+            # self.msg_.angular.z = self.Kw * (0.0 - self.yaw)
+            self.cmd_vel_pub.publish(self.msg_)
+        self.index += 1
 
+    def si2unicycle(self, u_si):
+        """
+        Convert SI control inputs [vx, vy] to unicycle model commands [v, omega].
+        More robust implementation.
+        """
+        u_si = np.array(u_si).reshape(self.n_x, 1)
+        u_si = u_si * 0.3
+        
+        v = self.Kv * np.linalg.norm(u_si)
+
+        desired_angle = np.arctan2(u_si[1, 0], u_si[0, 0])
+
+        angle_error = desired_angle - self.yaw
+        angle_error = np.arctan2(np.sin(angle_error), np.cos(angle_error)) 
+
+        # 4. Calculate angular velocity using P controller (Kw)
+        omega = self.Kw * angle_error
+
+        if abs(v) < 0.01:
+            omega = 0.0 
+
+        return np.array([[v], [omega]])
+
+    # def si2unicycle(self, u_si):
+    #     """
+    #     Convert SI control inputs to unicycle model commands.
+    #     u_si: [vx, vy] in m/s
+    #     Returns: [v, omega]
+    #     """
+
+    #     u_si = np.array(u_si).reshape(self.n_x, 1)
+    #     x_g = self.x + u_si * self.dt
+    #     dg = np.linalg.norm(u_si * self.dt)
+    #     if dg < 1e-4:
+    #         dg = 1e-4  # Prevent division by zero
+    #     v = self.Kv * dg
+    #     omega = (self.Kw * (np.arcsin((x_g[1] - self.x[1]) / (dg)) - self.yaw)).item()
+    #     # print(f"Unicycle v: {v}, Unicycle omega: {omega}")
+
+    #     return np.array([[v], [omega]])
+        
     def mocap_callback(self, msg):
         """
         Unified callback for all mocap position updates.
@@ -145,50 +224,66 @@ class MobileRobotController(Controller, Node):
         subject = msg.subject_name.lower()
         
         # Extract 2D position
-        position = np.array([[msg.x_trans], [msg.y_trans]])
-        
-        if 'go_1' in subject:
-            # Update robot position
-            self.robot_position = position
-            self.x = position  # Update controller state
-            self.position_received = True
-            self.get_logger().debug(f"Robot position: {position.flatten()}")
-            
-        elif 'obstacle1' in subject:
-            # Update obstacle 1 position
-            self.obs1_position = position
-            self.settings['obs1']['center'] = position
-            self.get_logger().debug(f"Obstacle 1 position: {position.flatten()}")
-            
-        elif 'obstacle2' in subject:
-            # Update obstacle 2 position
-            self.obs2_position = position
-            self.settings['obs2']['center'] = position
-            self.get_logger().debug(f"Obstacle 2 position: {position.flatten()}")
-            
+        position = 0.001 * np.array([[msg.x_trans], [msg.y_trans]])     # raw data is in [mm]
+        position = np.dot(self.mocap_R, position)
+
+        if (self.mocap_P is None) and ('go_1' in subject):
+            self.mocap_P = position
         else:
-            self.get_logger().error(f"Unknown subject: {msg.subject_name}")
+            position = position - self.mocap_P
+            if 'go_1' in subject:
+                quat = [msg.x_rot, msg.y_rot, msg.z_rot, msg.w]
+                try:
+                    rotation = Rotation.from_quat(quat)
+                except ValueError as e:
+                    self.get_logger().error(f"Invalid quaternion data: {quat}. Error: {e}")
+                    return
+                euler = rotation.as_euler('xyz', degrees=False)
+                self.yaw = euler[2] + self.theta
+                print(f"Robot Heading: {self.yaw * 180 / 3.1415}")
+                # Update robot position
+                self.x = position  
+                self.position_received = True
+                self.get_logger().debug(f"Robot position: {position.flatten()}")
+                
+            elif 'box_1' in subject:
+                # Update obstacle 1 position
+                self.obs1_position = position
+                self.settings['obs1']['center'] = position
+                self.get_logger().debug(f"Obstacle 1 position: {position.flatten()}")
+                
+            elif 'box_2' in subject:
+                # Update obstacle 2 position
+                self.obs2_position = position
+                self.settings['obs2']['center'] = position
+                self.get_logger().debug(f"Obstacle 2 position: {position.flatten()}")
+                
+            else:
+                self.get_logger().error(f"Unknown subject: {msg.subject_name}")
 
 
-def run_experiment():
+def run_experiment(args=None):
+    rclpy.init(args=args)
     # --- Settings and Parameters --- 
     num_rbf_centers_1d = 5
     n_rbf_1d = num_rbf_centers_1d**2 + 1   
     settings = {
-        'dt': 0.005, 't_end': 10, 'n_x': 2, 'n_u': 2, 'n_p': 2 * n_rbf_1d, 
-        'kappa': 10.0, 'u_max': 1.0, 'w_max_norm': 0.5, 'E': 0.1,
-        'workspace': [-1, 5, -1, 4] # x_min, x_max, y_min, y_max for RBF centers
+        'dt': 0.01, 't_end': 30, 'n_x': 2, 'n_u': 2, 'n_p': 2 * n_rbf_1d, 
+        'kappa': 10.0, 'u_max': 0.75, 'w_max_norm': 1.5, 'E': 0.1,
+        'obs1': {'center': np.array([[1.5], [1.00]]), 'radius': 0.45},
+        'obs2': {'center': np.array([[2.5], [2.50]]), 'radius': 0.45},
+        'workspace': [-1, 4, 1, -3] # x_min, x_max, y_min, y_max for RBF centers
     }
     settings['time'] = np.arange(0, settings['t_end'], settings['dt'])
 
     
-    goal_pos = np.array([[4.0], [3.0]])
+    goal_pos = np.array([[4.0], [-3.0]])
     settings['x_d'] = np.linspace(np.array([[0.0], [0.0]]), goal_pos, len(settings['time'])).T
     settings['v_d'] = np.gradient(settings['x_d'], settings['dt'], axis=2)
 
     controller_params = {
         'K': np.diag([0.1, 0.1]), 'gamma': np.diag([0.1] * settings['n_p']),
-        'K_e': 2.0, 'w_max': np.ones((settings['n_p'], 1)) * settings['w_max_norm'],
+        'K_e': 0.2, 'w_max': np.ones((settings['n_p'], 1)) * settings['w_max_norm'],
         'u_max': np.ones((settings['n_u'], 1)) * settings['u_max'], 
         'alpha': 0.25, 'E': settings['E'], 'n_x': settings['n_x'], 
         'n_p': settings['n_p'], 'dt': settings['dt']
@@ -197,9 +292,10 @@ def run_experiment():
     ctrl = MobileRobotController(settings=settings, **controller_params)
     
     try:
-        rclpy.spin(kalman_filter_node)
+        while rclpy.ok() and not ctrl.experiment_complete:
+            rclpy.spin_once(ctrl)
     except KeyboardInterrupt:
-        kalman_filter_node.get_logger().info('KeyboardInterrupt received, shutting down.')
+        ctrl.get_logger().info('KeyboardInterrupt received, shutting down.')
     finally:
         plot_results(settings, ctrl, goal_pos)
         ctrl.destroy_node()
@@ -210,13 +306,48 @@ def plot_results(settings, ctrl, goal_pos):
     Create two publication-quality figures:
     1. Robot trajectory with obstacles
     2. Subplots showing: state trajectory, CBF history, slack variables, parameter estimates, control inputs
+    
+    Saves figures with timestamps and stores data in .npz files for later retrieval.
     """
+    from datetime import datetime
+    import os
+    
+    # Generate timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Create fig directory if it doesn't exist
+    os.makedirs('fig', exist_ok=True)
+    
+    # Prepare data
     time = np.arange(0, settings['t_end'], settings['dt'])
     x_hist = np.array(ctrl.joint_traj).squeeze()
     u_hist = np.array(ctrl.u_traj).squeeze()
     w_hist = np.array(ctrl.w_traj).squeeze()
     cbf_hist = np.array(ctrl.cbf_traj).squeeze()
     slack_hist = np.array(ctrl.slack_traj).squeeze()
+    
+    # Save data to npz file
+    data_filename = f'fig/experiment_data_{timestamp}.npz'
+    np.savez(data_filename,
+             time=time,
+             x_hist=x_hist,
+             u_hist=u_hist,
+             w_hist=w_hist,
+             cbf_hist=cbf_hist,
+             slack_hist=slack_hist,
+             x_desired=settings['x_d'],
+             v_desired=settings['v_d'],
+             goal_pos=goal_pos,
+             obs1_center=settings['obs1']['center'],
+             obs1_radius=settings['obs1']['radius'],
+             obs2_center=settings['obs2']['center'],
+             obs2_radius=settings['obs2']['radius'],
+             u_max=settings['u_max'],
+             w_max_norm=settings['w_max_norm'],
+             workspace=settings['workspace'],
+             dt=settings['dt'],
+             t_end=settings['t_end'])
+    print(f"Saved data: {data_filename}")
     
     # Define color palette (colorblind-friendly)
     colors = {
@@ -274,15 +405,16 @@ def plot_results(settings, ctrl, goal_pos):
     ax1.legend(loc='upper left', fontsize=9, framealpha=0.95, edgecolor='black')
     ax1.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
     ax1.set_xlim([settings['workspace'][0] - 0.5, settings['workspace'][1] + 0.5])
-    ax1.set_ylim([settings['workspace'][2] - 0.5, settings['workspace'][3] + 0.5])
+    ax1.set_ylim([settings['workspace'][2] - 0.5, settings['workspace'][3] - 0.5])
     
     # Add minor ticks
     ax1.minorticks_on()
     ax1.tick_params(which='both', direction='in', top=True, right=True)
     
     plt.tight_layout()
-    plt.savefig('fig/mobile_robot_path.pdf', format='pdf', bbox_inches='tight')
-    print("Saved: fig/mobile_robot_path.pdf")
+    fig1_filename = f'fig/mobile_robot_path_{timestamp}.pdf'
+    plt.savefig(fig1_filename, format='pdf', bbox_inches='tight')
+    print(f"Saved: {fig1_filename}")
 
     # ========== Figure 2: History Subplots (3x2 layout) ==========
     fig2, axs = plt.subplots(3, 2, figsize=(7.5, 8))
@@ -361,9 +493,10 @@ def plot_results(settings, ctrl, goal_pos):
     axs[2, 1].tick_params(which='both', direction='in', top=True, right=True)
     
     plt.tight_layout()
-    plt.savefig('fig/mobile_robot_results.pdf', format='pdf', bbox_inches='tight')
-    print("Saved: fig/mobile_robot_results.pdf")
-    plt.show()
+    fig2_filename = f'fig/mobile_robot_results_{timestamp}.pdf'
+    plt.savefig(fig2_filename, format='pdf', bbox_inches='tight')
+    print(f"Saved: {fig2_filename}")
+    # plt.show()
 
 if __name__ == '__main__':
     run_experiment()

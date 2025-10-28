@@ -7,6 +7,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(ros2_unitree_legged_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -61,8 +62,8 @@ install(DIRECTORY launch
 )
 
 # Install Python modules
-install(DIRECTORY src/safe_ac_exp
-  DESTINATION lib/python3.8/site-packages/safe_ac_exp
+ament_python_install_package(${PROJECT_NAME}
+  PACKAGE_DIR src/${PROJECT_NAME}
 )
 
 # Install Python scripts
