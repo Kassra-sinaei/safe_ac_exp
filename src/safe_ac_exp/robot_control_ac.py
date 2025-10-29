@@ -181,7 +181,7 @@ class MobileRobotController(Controller, Node):
         More robust implementation.
         """
         u_si = np.array(u_si).reshape(self.n_x, 1)
-        u_si = u_si * 0.3
+        u_si = u_si * 0.1
         
         v = self.Kv * np.linalg.norm(u_si)
 
@@ -268,11 +268,11 @@ def run_experiment(args=None):
     num_rbf_centers_1d = 5
     n_rbf_1d = num_rbf_centers_1d**2 + 1   
     settings = {
-        'dt': 0.01, 't_end': 30, 'n_x': 2, 'n_u': 2, 'n_p': 2 * n_rbf_1d, 
-        'kappa': 10.0, 'u_max': 0.75, 'w_max_norm': 1.5, 'E': 0.1,
+        'dt': 0.01, 't_end': 35, 'n_x': 2, 'n_u': 2, 'n_p': 2 * n_rbf_1d, 
+        'kappa': 10.0, 'u_max': 2.5, 'w_max_norm': 2.5, 'E': 0.1,
         'obs1': {'center': np.array([[1.5], [1.00]]), 'radius': 0.45},
         'obs2': {'center': np.array([[2.5], [2.50]]), 'radius': 0.45},
-        'workspace': [-1, 4, 1, -3] # x_min, x_max, y_min, y_max for RBF centers
+        'workspace': [-1, 5, 1, -4] # x_min, x_max, y_min, y_max for RBF centers
     }
     settings['time'] = np.arange(0, settings['t_end'], settings['dt'])
 
@@ -282,10 +282,10 @@ def run_experiment(args=None):
     settings['v_d'] = np.gradient(settings['x_d'], settings['dt'], axis=2)
 
     controller_params = {
-        'K': np.diag([0.1, 0.1]), 'gamma': np.diag([0.1] * settings['n_p']),
+        'K': np.diag([1.0, 1.0]), 'gamma': np.diag([0.1] * settings['n_p']),
         'K_e': 0.2, 'w_max': np.ones((settings['n_p'], 1)) * settings['w_max_norm'],
         'u_max': np.ones((settings['n_u'], 1)) * settings['u_max'], 
-        'alpha': 0.25, 'E': settings['E'], 'n_x': settings['n_x'], 
+        'alpha': 1.0, 'E': settings['E'], 'n_x': settings['n_x'], 
         'n_p': settings['n_p'], 'dt': settings['dt']
     }
 
