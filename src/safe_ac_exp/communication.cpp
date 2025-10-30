@@ -28,7 +28,7 @@ public:
         high_cmd_ros_.gait_type = 1; 
         high_cmd_ros_.speed_level = 1; 
         high_cmd_ros_.foot_raise_height = 0.08;
-        high_cmd_ros_.body_height = 0.30;
+        high_cmd_ros_.body_height = 0.25;
         high_cmd_ros_.velocity[0] = 0.0;
         high_cmd_ros_.velocity[1] = 0.0;
         high_cmd_ros_.yaw_speed = 0.0;

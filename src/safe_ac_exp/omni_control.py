@@ -144,6 +144,55 @@ class MobileRobotController(Controller, Node):
     def alpha_3(self, error):
         return self.K_e * np.linalg.norm(error)**2
 
+    def u(self, x_d, xd_d, time):
+        """
+        Adaptive control law with body-frame transformation for omni-directional robot.
+        Overrides parent Controller.u() to account for heading angle coupling.
+        """
+        x_d = x_d.reshape(self.n_x, 1)
+        xd_d = xd_d.reshape(self.n_x, 1)
+        
+        # Compute world-frame error
+        error_world = self.x - x_d
+        
+        # Transform position error to body frame using current heading
+        cos_theta = np.cos(self.x[2, 0])
+        sin_theta = np.sin(self.x[2, 0])
+        R_world_to_body = np.array([[cos_theta, sin_theta, 0],
+                                     [-sin_theta,  cos_theta, 0],
+                                     [0,          0,         1]])
+        
+        # Error in body frame 
+        error_body = R_world_to_body @ error_world
+        # Desired velocity in body frame
+        xd_d_body = R_world_to_body @ xd_d
+
+        # Update integral for bounds
+        self.int_err_sq += (error_world.T @ error_world).item() * self.dt
+        
+        # Update parameter estimate (still uses world-frame error for stability proof)
+        self.update(error_world, time)
+        
+        # Solve CBF-QP for safe parameter modification
+        delta_w = self.cbf_qp(error_world, xd_d_body, time)
+        
+        if delta_w is None:
+            print("\nERROR\nQP failed, using zero delta_w\n")
+            delta_w = np.zeros((self.n_p, 1))
+            u = self.saturate(self.z(time) @ self.w + xd_d_body - self.K @ error_body)
+        else:
+            # Apply control in body frame
+            u = self.z(time) @ (self.w + delta_w) + xd_d_body - self.K @ error_body
+
+        # Store trajectories
+        self.w_traj.append(self.w.flatten())
+        self.u_traj.append(u.flatten())
+        self.joint_traj.append(self.x.flatten())
+        self.vel_traj.append(self.x_d.flatten())
+        self.e_traj.append(error_world.flatten())
+        
+        return u.flatten().tolist()
+    
     def control_loop(self):
         if self.yaw == None:
             return
@@ -160,7 +209,7 @@ class MobileRobotController(Controller, Node):
 
             # Publish velocity command
             self.msg_.linear.x = float(u_val[0]) * 0.5
-            self.msg_.linear.y = float(u_val[1]) *0.5
+            self.msg_.linear.y = float(u_val[1]) * 0.5
             self.msg_.linear.z = 0.0
             self.msg_.angular.x = 0.0
             self.msg_.angular.y = 0.0
@@ -251,7 +300,7 @@ def run_simulation(args=None):
     n_rbf_1d = num_rbf_centers_1d**3 + 1   
     settings = {
         'dt': 0.01, 't_end': 30, 'n_x': 3, 'n_u': 3, 'n_p': 3 * n_rbf_1d, 
-        'kappa': 10.0, 'u_max': np.array([0.75, 0.75, 1.0]), 'w_max_norm': 1.0, 'E': 0.1,
+        'kappa': 10.0, 'u_max': np.array([2.5, 2.5, 5.0]), 'w_max_norm': 1.0, 'E': 0.1,
         'obs1': {'center': np.array([[1.5], [-1.00]]), 'radius': 0.45},
         'obs2': {'center': np.array([[2.5], [-2.50]]), 'radius': 0.45},
         'workspace': [-1, 5, 1, -4, -np.pi, np.pi] # x_min, x_max, y_min, y_max theta_min, theta_max for RBF centers
@@ -291,8 +340,8 @@ def run_experiment(args=None):
     num_rbf_centers_1d = 5
     n_rbf_1d = num_rbf_centers_1d**3 + 1   
     settings = {
-        'dt': 0.01, 't_end': 30, 'n_x': 3, 'n_u': 3, 'n_p': 3 * n_rbf_1d, 
-        'kappa': 10.0, 'u_max': np.array([0.75, 0.75, 1.0]), 'w_max_norm': 1.0, 'E': 0.1,
+        'dt': 0.01, 't_end': 45, 'n_x': 3, 'n_u': 3, 'n_p': 3 * n_rbf_1d, 
+        'kappa': 10.0, 'u_max': np.array([0.6, 0.3, 0.5]), 'w_max_norm': 1.0, 'E': 0.1,
         'obs1': {'center': np.array([[1.5], [-1.00]]), 'radius': 0.45},
         'obs2': {'center': np.array([[2.5], [-2.50]]), 'radius': 0.45},
         'workspace': [-1, 5, 1, -4, -np.pi, np.pi] # x_min, x_max, y_min, y_max theta_min, theta_max for RBF centers

@@ -197,24 +197,6 @@ class MobileRobotController(Controller, Node):
             omega = 0.0 
 
         return np.array([[v], [omega]])
-
-    # def si2unicycle(self, u_si):
-    #     """
-    #     Convert SI control inputs to unicycle model commands.
-    #     u_si: [vx, vy] in m/s
-    #     Returns: [v, omega]
-    #     """
-
-    #     u_si = np.array(u_si).reshape(self.n_x, 1)
-    #     x_g = self.x + u_si * self.dt
-    #     dg = np.linalg.norm(u_si * self.dt)
-    #     if dg < 1e-4:
-    #         dg = 1e-4  # Prevent division by zero
-    #     v = self.Kv * dg
-    #     omega = (self.Kw * (np.arcsin((x_g[1] - self.x[1]) / (dg)) - self.yaw)).item()
-    #     # print(f"Unicycle v: {v}, Unicycle omega: {omega}")
-
-    #     return np.array([[v], [omega]])
         
     def mocap_callback(self, msg):
         """
@@ -268,7 +250,7 @@ def run_experiment(args=None):
     num_rbf_centers_1d = 5
     n_rbf_1d = num_rbf_centers_1d**2 + 1   
     settings = {
-        'dt': 0.01, 't_end': 35, 'n_x': 2, 'n_u': 2, 'n_p': 2 * n_rbf_1d, 
+        'dt': 0.01, 't_end': 30, 'n_x': 2, 'n_u': 2, 'n_p': 2 * n_rbf_1d, 
         'kappa': 10.0, 'u_max': 2.5, 'w_max_norm': 2.5, 'E': 0.1,
         'obs1': {'center': np.array([[1.5], [1.00]]), 'radius': 0.45},
         'obs2': {'center': np.array([[2.5], [2.50]]), 'radius': 0.45},
@@ -277,7 +259,7 @@ def run_experiment(args=None):
     settings['time'] = np.arange(0, settings['t_end'], settings['dt'])
 
     
-    goal_pos = np.array([[4.0], [-3.0]])
+    goal_pos = -np.array([[4.0], [-3.0]])
     settings['x_d'] = np.linspace(np.array([[0.0], [0.0]]), goal_pos, len(settings['time'])).T
     settings['v_d'] = np.gradient(settings['x_d'], settings['dt'], axis=2)
 
