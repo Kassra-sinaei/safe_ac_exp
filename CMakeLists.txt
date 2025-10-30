@@ -69,6 +69,7 @@ ament_python_install_package(${PROJECT_NAME}
 # Install Python scripts
 install(PROGRAMS
   src/safe_ac_exp/robot_control_ac.py
+  src/safe_ac_exp/omni_control.py
   DESTINATION lib/${PROJECT_NAME}
 )
 ament_package()
